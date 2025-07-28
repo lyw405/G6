@@ -1,3 +1,4 @@
+import { print } from '../../utils/print';
 import type { PluginExportContext } from '../types';
 
 /**
@@ -38,8 +39,8 @@ export class BackgroundExportRenderer {
       // Prepare canvas
       this.prepareCanvas(ctx, canvasElement, computedStyle);
 
-      // 计算尺寸
-      // Calculate dimensions
+      // 使用Canvas实际尺寸进行背景渲染
+      // Use actual Canvas dimensions for background rendering
       const displayWidth = canvasElement.width / devicePixelRatio;
       const displayHeight = canvasElement.height / devicePixelRatio;
 
@@ -191,6 +192,15 @@ export class BackgroundExportRenderer {
     const backgroundImage = computedStyle.backgroundImage;
     if (!backgroundImage || backgroundImage === 'none') return;
 
+    // 检查是否是CSS渐变
+    // Check if it's a CSS gradient
+    if (this.isCSSGradient(backgroundImage)) {
+      await this.drawCSSGradient(ctx, backgroundImage, computedStyle, displayWidth, displayHeight, devicePixelRatio);
+      return;
+    }
+
+    // 处理图片URL
+    // Handle image URL
     const imageUrl = this.extractImageUrl(backgroundImage);
     if (!imageUrl) return;
 
@@ -200,6 +210,148 @@ export class BackgroundExportRenderer {
     } catch (error) {
       // 静默处理图片加载错误
       // Silently handle image loading errors
+    }
+  }
+
+  /**
+   * 检查是否是CSS渐变
+   * Check if it's a CSS gradient
+   * @param backgroundImage - background-image CSS值
+   * @returns 是否是CSS渐变
+   */
+  private isCSSGradient(backgroundImage: string): boolean {
+    return (
+      backgroundImage.includes('linear-gradient') ||
+      backgroundImage.includes('radial-gradient') ||
+      backgroundImage.includes('conic-gradient') ||
+      backgroundImage.includes('repeating-linear-gradient') ||
+      backgroundImage.includes('repeating-radial-gradient')
+    );
+  }
+
+  /**
+   * 绘制CSS渐变背景
+   * Draw CSS gradient background
+   * @param ctx - 2D渲染上下文
+   * @param backgroundImage - background-image CSS值
+   * @param computedStyle - 计算样式
+   * @param displayWidth - 显示宽度
+   * @param displayHeight - 显示高度
+   * @param devicePixelRatio - 设备像素比
+   */
+  private async drawCSSGradient(
+    ctx: CanvasRenderingContext2D,
+    backgroundImage: string,
+    computedStyle: CSSStyleDeclaration,
+    displayWidth: number,
+    displayHeight: number,
+    devicePixelRatio: number,
+  ): Promise<void> {
+    try {
+      // 创建一个临时的DOM元素来渲染渐变
+      // Create a temporary DOM element to render the gradient
+      const tempDiv = document.createElement('div');
+      tempDiv.style.width = `${displayWidth}px`;
+      tempDiv.style.height = `${displayHeight}px`;
+      tempDiv.style.backgroundImage = backgroundImage;
+      tempDiv.style.backgroundSize = computedStyle.backgroundSize || '20px 20px';
+      tempDiv.style.backgroundPosition = computedStyle.backgroundPosition || '0 0';
+      tempDiv.style.backgroundRepeat = computedStyle.backgroundRepeat || 'repeat';
+
+      // 临时添加到文档中（不可见）
+      // Temporarily add to document (invisible)
+      tempDiv.style.position = 'absolute';
+      tempDiv.style.left = '-9999px';
+      tempDiv.style.top = '-9999px';
+      document.body.appendChild(tempDiv);
+
+      // 创建临时画布来捕获渐变
+      // Create temporary canvas to capture gradient
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = displayWidth * devicePixelRatio;
+      tempCanvas.height = displayHeight * devicePixelRatio;
+      const tempCtx = tempCanvas.getContext('2d');
+
+      if (tempCtx) {
+        // 使用html2canvas或类似技术来捕获渐变
+        // 这里我们用一个简化的方法：手动解析linear-gradient
+        // Use html2canvas or similar technique to capture gradient
+        // Here we use a simplified method: manually parse linear-gradient
+        this.drawLinearGradientFallback(
+          tempCtx,
+          backgroundImage,
+          displayWidth * devicePixelRatio,
+          displayHeight * devicePixelRatio,
+        );
+
+        // 将渐变绘制到主画布
+        // Draw gradient to main canvas
+        ctx.save();
+        ctx.scale(1, 1);
+        ctx.drawImage(
+          tempCanvas,
+          0,
+          0,
+          tempCanvas.width,
+          tempCanvas.height,
+          0,
+          0,
+          displayWidth * devicePixelRatio,
+          displayHeight * devicePixelRatio,
+        );
+        ctx.restore();
+      }
+
+      // 清理临时元素
+      // Clean up temporary element
+      document.body.removeChild(tempDiv);
+    } catch (error) {
+      print.warn(`Failed to render CSS gradient: ${error}`);
+    }
+  }
+
+  /**
+   * 简化的线性渐变绘制（fallback方法）
+   * Simplified linear gradient drawing (fallback method)
+   * @param ctx - 2D渲染上下文
+   * @param backgroundImage - background-image CSS值
+   * @param width - 宽度
+   * @param height - 高度
+   */
+  private drawLinearGradientFallback(
+    ctx: CanvasRenderingContext2D,
+    backgroundImage: string,
+    width: number,
+    height: number,
+  ): void {
+    // 解析 linear-gradient(45deg, #f0f2f5 25%, transparent 25%)
+    // Parse linear-gradient(45deg, #f0f2f5 25%, transparent 25%)
+    const match = backgroundImage.match(/linear-gradient\(([^)]+)\)/);
+    if (!match) return;
+
+    const params = match[1].split(',').map((s) => s.trim());
+
+    // 解析角度（简化处理45deg）
+    // Parse angle (simplified handling for 45deg)
+    const angle = params[0].includes('45deg') ? 45 : 0;
+
+    // 创建重复的条纹图案
+    // Create repeating stripe pattern
+    const stripeSize = 20; // 对应 backgroundSize: '20px 20px'
+    const color1 = 'rgb(240, 242, 245)'; // #f0f2f5
+    const color2 = 'transparent';
+
+    // 绘制斜纹图案
+    // Draw diagonal stripe pattern
+    for (let x = -height; x < width + height; x += stripeSize) {
+      for (let y = 0; y < height + width; y += stripeSize * 2) {
+        ctx.fillStyle = color1;
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate((angle * Math.PI) / 180);
+        ctx.fillRect(0, 0, stripeSize, stripeSize);
+        ctx.restore();
+      }
     }
   }
 

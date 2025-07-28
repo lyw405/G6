@@ -1,5 +1,6 @@
 import type { Canvas as GCanvas } from '@antv/g';
-import type { ExportablePlugin, PluginExportContext } from '../plugins/types';
+import type { ExportablePlugin, PluginExportContext, SSRPluginExportContext } from '../plugins/types';
+import { isSSR } from '../utils/env';
 import { print } from '../utils/print';
 import type { RuntimeContext } from './types';
 
@@ -30,6 +31,28 @@ export class ExportHelper {
 
     if (plugins.length === 0) return;
 
+    // 检测当前环境并选择相应的渲染策略
+    // Detect current environment and choose appropriate rendering strategy
+    if (isSSR()) {
+      await this.renderPluginsInSSR(offscreenCanvas, exportContext, plugins);
+    } else {
+      await this.renderPluginsInBrowser(offscreenCanvas, exportContext, plugins);
+    }
+  }
+
+  /**
+   * <zh/> 在浏览器环境中渲染插件
+   *
+   * <en/> Render plugins in browser environment
+   * @param offscreenCanvas - <zh/> 离屏画布 | <en/> Offscreen canvas
+   * @param exportContext - <zh/> 导出上下文 | <en/> Export context
+   * @param plugins - <zh/> 可导出插件列表 | <en/> List of exportable plugins
+   */
+  private async renderPluginsInBrowser(
+    offscreenCanvas: GCanvas,
+    exportContext: Omit<PluginExportContext, 'offscreenCanvas'>,
+    plugins: ExportablePlugin[],
+  ): Promise<void> {
     const context: PluginExportContext = {
       offscreenCanvas,
       ...exportContext,
@@ -38,12 +61,62 @@ export class ExportHelper {
     // 并行处理所有可导出插件
     // Process all exportable plugins in parallel
     const renderPromises = plugins.map((plugin) => {
-      return plugin.renderToExportCanvas!(context).catch((error) => {
+      if (!plugin.renderToExportCanvas) return Promise.resolve();
+
+      return plugin.renderToExportCanvas(context).catch((error) => {
         // 记录插件渲染错误，便于调试
         // Log plugin rendering errors for debugging
         const pluginName = plugin.constructor.name || 'UnknownPlugin';
         const errorMessage = error.message || String(error);
         print.warn(`Plugin export rendering failed: ${pluginName} - ${errorMessage}`);
+        // 抛出错误以允许上层处理，但不会中断其他插件的渲染
+        // Throw error to allow upper layer handling, but won't interrupt other plugins' rendering
+        throw error;
+      });
+    });
+
+    await Promise.allSettled(renderPromises);
+  }
+
+  /**
+   * <zh/> 在SSR环境中渲染插件
+   *
+   * <en/> Render plugins in SSR environment
+   * @param offscreenCanvas - <zh/> 离屏画布 | <en/> Offscreen canvas
+   * @param exportContext - <zh/> 导出上下文 | <en/> Export context
+   * @param plugins - <zh/> 可导出插件列表 | <en/> List of exportable plugins
+   */
+  private async renderPluginsInSSR(
+    offscreenCanvas: GCanvas,
+    exportContext: Omit<PluginExportContext, 'offscreenCanvas'>,
+    plugins: ExportablePlugin[],
+  ): Promise<void> {
+    // 过滤出支持SSR的插件
+    // Filter plugins that support SSR
+    const ssrCompatiblePlugins = plugins.filter(
+      (plugin) => plugin.supportsSSRExport?.() && plugin.renderToExportCanvasSSR,
+    );
+
+    if (ssrCompatiblePlugins.length === 0) {
+      print.warn('No SSR-compatible plugins found for export rendering');
+      return;
+    }
+
+    const context: SSRPluginExportContext = {
+      offscreenCanvas,
+      ...exportContext,
+      pluginOptions: {}, // 这将被每个插件覆盖
+    };
+
+    // 并行处理所有SSR兼容的插件
+    // Process all SSR-compatible plugins in parallel
+    const renderPromises = ssrCompatiblePlugins.map((plugin) => {
+      return plugin.renderToExportCanvasSSR!(context).catch((error) => {
+        // 记录插件渲染错误，便于调试
+        // Log plugin rendering errors for debugging
+        const pluginName = plugin.constructor.name || 'UnknownPlugin';
+        const errorMessage = error.message || String(error);
+        print.warn(`Plugin SSR export rendering failed: ${pluginName} - ${errorMessage}`);
         // 抛出错误以允许上层处理，但不会中断其他插件的渲染
         // Throw error to allow upper layer handling, but won't interrupt other plugins' rendering
         throw error;

@@ -6,6 +6,7 @@ import { createDOM } from '@antv/util';
 import type { CanvasOptions } from '../spec/canvas';
 import type { CanvasLayer, Point } from '../types';
 import { getBBoxSize, getCombinedBBox } from '../utils/bbox';
+import { isSSR } from '../utils/env';
 import { parsePoint, toPointObject } from '../utils/point';
 import { ExportHelper } from './export-helper';
 import type { RuntimeContext } from './types';
@@ -276,12 +277,27 @@ export class Canvas {
   }
 
   public async toDataURL(options: Partial<DataURLOptions> = {}) {
-    const devicePixelRatio = globalThis.devicePixelRatio || 1;
+    // 在SSR环境中提供默认值
+    // Provide default values in SSR environment
+    const devicePixelRatio = (isSSR() ? 1 : globalThis.devicePixelRatio) || 1;
     const { mode = 'viewport', ...restOptions } = options;
     let [startX, startY, width, height] = [0, 0, 0, 0];
 
     if (mode === 'viewport') {
-      [width, height] = this.getSize();
+      // 🔧 修复：使用页面实际显示尺寸，而不是Graph配置尺寸
+      // Fix: Use actual page display size instead of Graph config size
+      const container = this.getContainer();
+      if (container && !isSSR()) {
+        // 在浏览器环境中，使用容器的实际显示尺寸
+        // In browser environment, use container's actual display size
+        const rect = container.getBoundingClientRect();
+        width = rect.width;
+        height = rect.height;
+      } else {
+        // 在SSR环境中，回退到Graph配置尺寸
+        // In SSR environment, fallback to Graph config size
+        [width, height] = this.getSize();
+      }
     } else if (mode === 'overall') {
       const bounds = this.getBounds();
       const size = getBBoxSize(bounds);
@@ -289,7 +305,9 @@ export class Canvas {
       [width, height] = size;
     }
 
-    const container: HTMLElement = createDOM('<div id="virtual-image"></div>');
+    // 在SSR环境中，使用一个虚拟容器
+    // In SSR environment, use a virtual container
+    const container: HTMLElement | string = isSSR() ? 'virtual-image' : createDOM('<div id="virtual-image"></div>');
 
     const offscreenCanvas = new GCanvas({
       width,
@@ -395,15 +413,21 @@ export class Canvas {
     // Wait for canvas to be ready
     await canvas.ready;
 
-    // 使用requestAnimationFrame确保当前帧渲染完成
-    // Use requestAnimationFrame to ensure current frame rendering is complete
-    await new Promise((resolve) => {
-      requestAnimationFrame(() => {
-        // 再等待一帧以确保所有异步操作完成
-        // Wait another frame to ensure all async operations are complete
-        requestAnimationFrame(resolve);
+    if (isSSR()) {
+      // 在SSR环境中，直接等待一个短暂的延迟来确保渲染完成
+      // In SSR environment, wait for a brief delay to ensure rendering completion
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    } else {
+      // 使用requestAnimationFrame确保当前帧渲染完成
+      // Use requestAnimationFrame to ensure current frame rendering is complete
+      await new Promise((resolve) => {
+        requestAnimationFrame(() => {
+          // 再等待一帧以确保所有异步操作完成
+          // Wait another frame to ensure all async operations are complete
+          requestAnimationFrame(resolve);
+        });
       });
-    });
+    }
   }
 
   public destroy() {

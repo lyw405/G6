@@ -2,9 +2,10 @@ import { omit } from '@antv/util';
 import type { RuntimeContext } from '../../runtime/types';
 import type { BasePluginOptions } from '../base-plugin';
 import { BasePlugin } from '../base-plugin';
-import type { ExportablePlugin, PluginExportContext } from '../types';
+import type { ExportablePlugin, PluginExportContext, SSRPluginExportContext } from '../types';
 import { createPluginContainer } from '../utils/dom';
 import { BackgroundExportRenderer } from './export-renderer';
+import { BackgroundSSRRenderer } from './ssr-renderer';
 
 /**
  * <zh/> 背景配置项
@@ -31,6 +32,7 @@ export class Background extends BasePlugin<BackgroundOptions> implements Exporta
 
   private $element: HTMLElement = createPluginContainer('background');
   private exportRenderer = new BackgroundExportRenderer();
+  private ssrRenderer = new BackgroundSSRRenderer();
 
   constructor(context: RuntimeContext, options: BackgroundOptions) {
     super(context, Object.assign({}, Background.defaultOptions, options));
@@ -56,13 +58,39 @@ export class Background extends BasePlugin<BackgroundOptions> implements Exporta
   }
 
   /**
-   * <zh/> 将插件内容渲染到导出画布
+   * <zh/> 将插件内容渲染到导出画布 (浏览器环境)
    *
-   * <en/> Render plugin content to export canvas
+   * <en/> Render plugin content to export canvas (browser environment)
    * @param context - <zh/> 导出上下文 | <en/> Export context
    */
   public async renderToExportCanvas(context: PluginExportContext): Promise<void> {
     await this.exportRenderer.renderToCanvas(this.$element, context);
+  }
+
+  /**
+   * <zh/> 将插件内容渲染到导出画布 (SSR环境)
+   *
+   * <en/> Render plugin content to export canvas (SSR environment)
+   * @param context - <zh/> SSR导出上下文 | <en/> SSR export context
+   */
+  public async renderToExportCanvasSSR(context: SSRPluginExportContext): Promise<void> {
+    // 在SSR环境中，传入插件配置选项而不是DOM元素样式
+    // In SSR environment, pass plugin options instead of DOM element styles
+    const contextWithOptions = {
+      ...context,
+      pluginOptions: this.options,
+    };
+    await this.ssrRenderer.renderToCanvas(contextWithOptions);
+  }
+
+  /**
+   * <zh/> 检查插件是否支持SSR导出
+   *
+   * <en/> Check if plugin supports SSR export
+   * @returns <zh/> 是否支持SSR | <en/> Whether SSR is supported
+   */
+  public supportsSSRExport(): boolean {
+    return true;
   }
 
   /**
